@@ -25,6 +25,7 @@ Most likely you'll need to :
 - find your eventid
 - provide a logo file
 
+    
     # Event that we used to generate it
     :event:
       :id: YOUREVENTID
