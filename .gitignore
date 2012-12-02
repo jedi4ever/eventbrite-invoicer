@@ -1,0 +1,7 @@
+*.pdf
+*.yml
+!sample/*
+*.swp
+.DS_Store
+Gemfile.lock
+logo.png
