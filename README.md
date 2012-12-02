@@ -5,7 +5,7 @@ This is was created out of the frustration that evenbrite doesn't generate invoi
 
 ## Install
 
-  $ bundle install
+    $ bundle install
 
 ## Config
 ### Credentials.yml
