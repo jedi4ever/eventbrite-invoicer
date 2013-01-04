@@ -185,7 +185,7 @@ end
 
 # Sort by ticket created date
 attendees.sort! { |a,b|
-  Date.parse(a.created) <=> Date.parse(b.created)
+  DateTime.parse(a.created) <=> DateTime.parse(b.created)
 }
 
 # Stats
@@ -226,7 +226,7 @@ attendees.each do |attendee|
     vat_options = {
       :tax_rate => settings[:invoice][:fields][:tax_rate],
       :tax_description => settings[:invoice][:fields][:tax_description],
-      :notes => settings[:invoice][:fields][:notes]
+      :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{attendee.order_id} on #{attendee.created}"
     }
 
     invoice_options = {
@@ -238,7 +238,6 @@ attendees.each do |attendee|
     invoice = Payday::Invoice.new(
       invoice_options.merge(vat_options)
     )
-    invoice_nr += 1
 
     # We create separate invoices per attendee
     item_options = {
@@ -291,5 +290,6 @@ attendees.each do |attendee|
       end
     end
 
+    invoice_nr += 1
   end
 end
