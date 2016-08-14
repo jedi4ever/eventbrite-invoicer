@@ -1,4 +1,4 @@
-require 'eventbrite-client'
+require 'eventbrite'
 require 'mail'
 require 'ostruct'
 require 'pp'
@@ -33,20 +33,22 @@ end
 
 optparse.parse!
 
-# Loading credentials
-begin
-  credentials = YAML.load_file(options[:credentials])
-rescue Exception => e
-  puts "Error #{e}"
-  exit -1
-end
-
 settings={}
 # Loading setting
 begin
   settings = YAML.load_file(options[:settings])
 rescue Exception => e
   puts "Error #{e}"
+  puts optparse
+  exit -1
+end
+
+# Loading credentials
+begin
+  credentials = YAML.load_file(options[:credentials])
+rescue Exception => e
+  puts "Error #{e}"
+  puts optparse
   exit -1
 end
 
@@ -64,6 +66,10 @@ country = settings[:invoice][:country]
 
 # First invoice_nr from settings
 invoice_nr = settings[:invoice][:start]
+
+class EbOrder
+
+end
 
 class EbAttendee
 
@@ -84,16 +90,16 @@ class EbAttendee
         bill << b
       end
     else
-      [ @home_address, @home_address2 ,  @home_city].each do |b|
+      [ @tax_address, @tax_address2 ,  @tax_city].each do |b|
         bill << b
       end
-      bill << "#{IsoCountryCodes.find(@home_country).name}"
+      bill << "#{IsoCountryCodes.find(@tax_country).name}"
     end
 
     # Try to correct VAT address
     unless @company_tax_number_vat.nil?
       if @company_tax_number_vat.match(/^[0-9]/)
-        bill << @home_country + @company_tax_number_vat
+        bill << @tax_country + @company_tax_number_vat
       else
         bill << @company_tax_number_vat
       end
@@ -128,168 +134,158 @@ class EbAttendee
     @invoice_required == 'YES'
   end
 
-
 end
 
 # Setup eventbrite credentials
+access_token  = credentials[:access_token]
 app_key       = credentials[:app_key]
 user_key      = credentials[:user_key]
 event_id      = settings[:event][:id]
 eb_auth_tokens = { app_key: app_key, user_key: user_key}
 
 # Connect to Eventbrite
-eb_client = EventbriteClient.new(eb_auth_tokens)
+Eventbrite.token = access_token
 
-# Find all events
-response = eb_client.user_list_events()
-
-# Lookup the event
-eb_events = eb_client.event_get({ id: event_id })
-eb_event = eb_events['event']
-
-# Find all ticket types
-tickets = Hash.new
-eb_tickets = eb_event['tickets']
-eb_tickets.each do |eb_ticket|
-  ticket = eb_ticket['ticket']
-  ticket.keys.each do |key|
-    ticket_id = ticket['id']
-    tickets[ticket_id] = Hash.new if tickets[ticket_id].nil?
-    tickets[ticket_id][key] = ticket[key]
-  end
+# Load each order
+eb_orders = Eventbrite::Order.all({ event_id: event_id , expand:'attendees,buyer'})[:orders]
+eb_orders.each do |eb_order|
+  puts eb_order.to_s
+  puts '--------------------------------------------------------------------------------------'
 end
 
 # Load each attendee
-eb_attendees = eb_client.event_list_attendees({ id: event_id })['attendees']
+eb_attendees = Eventbrite::Attendee.all({ event_id: event_id })[:attendees]
 attendees = Array.new
 
 eb_attendees.each do |eb_attendee|
-  p = EbAttendee.new
-
-  # Inject all information into our attendee p
-  eb_attendee['attendee'].keys.each do |name|
-    p.instance_variable_set("@#{name}",eb_attendee['attendee'][name])
-  end
-
-  # Sanitize question results and inject them as variables
-  eb_answers = eb_attendee['attendee']['answers']
-  eb_answers.each do |eb_answer|
-    answer = eb_answer['answer']
-    question_name = answer['question'].downcase.gsub(/[^A-Za-z0-9_\ \-]/,'').gsub(/[\ -]/,'_')
-    # Inject all answers into our attendee p
-    p.instance_variable_set("@#{question_name}",answer['answer_text'])
-  end
-
-  attendees << p
+  # p = EbAttendee.new
+  #
+  # # Inject all information into our attendee p
+  # eb_attendee['attendee'].keys.each do |name|
+  #   p.instance_variable_set("@#{name}",eb_attendee['attendee'][name])
+  #   puts "%-20s: %s" % [name, eb_attendee['attendee'][name]]
+  # puts eb_attendee.profile.first_name
+  # puts eb_attendee.profile.last_name
+  # puts eb_attendee.to_s
+  # end
+  #
+  # # Sanitize question results and inject them as variables
+  # eb_answers = eb_attendee['attendee']['answers']
+  # eb_answers.each do |eb_answer|
+  #   answer = eb_answer['answer']
+  #   question_name = answer['question'].downcase.gsub(/[^A-Za-z0-9_\ \-]/,'').gsub(/[\ -]/,'_')
+  #   # Inject all answers into our attendee p
+  #   p.instance_variable_set("@#{question_name}",answer['answer_text'])
+  # end
+  #
+  # attendees << p
+  # puts '--------------------------------------------------------------------------------------'
 end
 
 # Sort by ticket created date
-attendees.sort! { |a,b|
-  DateTime.parse(a.created) <=> DateTime.parse(b.created)
-}
+# attendees.sort! { |a,b|
+#   DateTime.parse(a.created) <=> DateTime.parse(b.created)
+# }
 
 # Stats
-money = 0
-free_tickets = 0
-invoices = 0
-countries = Hash.new
-discounts = Hash.new
+# money = 0
+# free_tickets = 0
+# invoices = 0
+# countries = Hash.new
+# discounts = Hash.new
 
 # Now iterate over all attendees (from memory)
-attendees.each do |attendee|
+# attendees.each do |attendee|
 
   # Update the stats for money, free tickets and invoices
-  money = money + attendee.amount_paid.to_f
-  free_tickets +=1 if attendee.amount_paid.to_f == 0
-  invoices +=1 if attendee.invoice_required == 'YES'
+  # money = money + attendee.amount_paid.to_f
+  # free_tickets +=1 if attendee.amount_paid.to_f == 0
+  # invoices +=1 if attendee.invoice_required == 'YES'
 
   # See how many got discounts
-  discounts[attendee.discount] += 1 unless discounts[attendee.discount].nil?
-  discounts[attendee.discount] = 1 if discounts[attendee.discount].nil?
-end
-
-80.times { print '-'}
-puts
-
-puts "Attendees: #{attendees.size} - Tickets: Free #{free_tickets} - Invoice Required #{invoices}"
-puts "Total Sales: #{money}"
-80.times { print '-'}
-puts
+#   discounts[attendee.discount] += 1 unless discounts[attendee.discount].nil?
+#   discounts[attendee.discount] = 1 if discounts[attendee.discount].nil?
+# end
+#
+# 80.times { print '-'}
+# puts
+#
+# puts "Attendees: #{attendees.size} - Tickets: Free #{free_tickets} - Invoice Required #{invoices}"
+# puts "Total Sales: #{money}"
+# 80.times { print '-'}
+# puts
 
 # Now for all attendees in memory
-attendees.each do |attendee|
+# attendees.each do |attendee|
 
   # Only if they have paid
-  unless attendee.amount_paid.to_f == 0
-
-    # Always VAT
-    vat_options = {
-      :tax_rate => settings[:invoice][:fields][:tax_rate],
-      :tax_description => settings[:invoice][:fields][:tax_description],
-      :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{attendee.order_id} on #{attendee.created}"
-    }
-
-    invoice_options = {
-      :invoice_number => invoice_nr,
-      :bill_to => attendee.bill_to,
-      :paid_at => attendee.created
-    }
-
-    invoice = Payday::Invoice.new(
-      invoice_options.merge(vat_options)
-    )
-
-    # We create separate invoices per attendee
-    item_options = {
-      :quantity => 1,
-      :description => "#{settings[:invoice][:fields][:description]} - #{tickets[attendee.ticket_id]['name']}",
-    }
-
-    price_options = {
-      :price => attendee.amount_paid.to_f/(1.21),
-    }
-
-    invoice.line_items << Payday::LineItem.new(
-      item_options.merge(price_options)
-    )
-
-    # Create the PDF file if it doesn't exist
-    pdf_file="#{settings[:invoice][:prefix]}#{invoice_nr}-#{attendee.safe_name}.pdf"
-
-    unless File.exists?(pdf_file)
-      begin
-        invoice.render_pdf_to_file(File.join(settings[:output_dir],pdf_file))
-      rescue Exception => ex
-        puts "Error: #{ex}"
-        exit -1
-      end
-    end
-
-    unless options[:mail].nil?
-      # Set mail configuration
-      Mail.defaults do
-        smtp = Net::SMTP.start(settings[:email][:smtp_server],settings[:email][:smtp_port])
-        delivery_method :smtp_connection , :connection => smtp
-      end
-
-      # Only send invoices to people that requested one
-      if attendee.invoice_required?
-        mail = Mail.new do
-          from settings[:email][:from]
-          to "#{attendee.email}" if options[:mail] == 'attendee'
-          to settings[:email][:test_address] if option[:mail] = 'test'
-          subject settings[:email][:subject]
-          body settings[:email][:body]
-
-          # Attach file
-          add_file(pdf_file)
-        end
-
-        # Send mail
-        #mail.deliver
-      end
-    end
-
-    invoice_nr += 1
-  end
-end
+  # unless attendee.amount_paid.to_f == 0
+  #
+  #   # Always VAT
+  #   vat_options = {
+  #     :tax_rate => settings[:invoice][:fields][:tax_rate],
+  #     :tax_description => settings[:invoice][:fields][:tax_description],
+  #     :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{attendee.order_id} on #{attendee.created}"
+  #   }
+  #
+  #   invoice_options = {
+  #     :invoice_number => invoice_nr,
+  #     :bill_to => attendee.bill_to,
+  #     :paid_at => attendee.created
+  #   }
+  #
+  #   invoice = Payday::Invoice.new(
+  #     invoice_options.merge(vat_options)
+  #   )
+  #
+  #   # We create separate invoices per attendee
+  #   item_options = {
+  #     :quantity => 1,
+  #     :description => "#{settings[:invoice][:fields][:description]} - #{tickets[attendee.ticket_id]['name']}",
+  #   }
+  #
+  #   price_options = {
+  #     :price => attendee.amount_paid.to_f/(1.21),
+  #   }
+  #
+  #   invoice.line_items << Payday::LineItem.new(
+  #     item_options.merge(price_options)
+  #   )
+  #
+  #   # Create the PDF file if it doesn't exist
+  #   pdf_file="#{settings[:invoice][:prefix]}#{invoice_nr}-#{attendee.safe_name}.pdf"
+  #
+  #   unless File.exists?(pdf_file)
+  #     begin
+  #       invoice.render_pdf_to_file(File.join(settings[:output_dir],pdf_file))
+  #     rescue Exception => ex
+  #       puts "Error: #{ex}"
+  #       exit -1
+  #     end
+  #   end
+  #
+  #   unless options[:mail].nil?
+  #     # Set mail configuration
+  #     Mail.defaults do
+  #       smtp = Net::SMTP.start(settings[:email][:smtp_server],settings[:email][:smtp_port])
+  #       delivery_method :smtp_connection , :connection => smtp
+  #     end
+  #
+  #     mail = Mail.new do
+  #       from settings[:email][:from]
+  #       to "#{attendee.email}" if options[:mail] == 'attendee'
+  #       to settings[:email][:test_address] if option[:mail] = 'test'
+  #       subject settings[:email][:subject]
+  #       body settings[:email][:body]
+  #
+  #       # Attach file
+  #       add_file(pdf_file)
+  #
+  #       # Send mail
+  #       #mail.deliver
+  #     end
+  #   end
+  #
+  #   invoice_nr += 1
+  # end
+# end
