@@ -1,9 +1,9 @@
-require 'eventbrite'
 require 'mail'
 require 'ostruct'
 require 'pp'
 require 'iso_country_codes'
-
+require 'active_model'
+require 'active_importer'
 require 'payday'
 
 
@@ -67,8 +67,40 @@ country = settings[:invoice][:country]
 # First invoice_nr from settings
 invoice_nr = settings[:invoice][:start]
 
-class EbOrder
+class Order
+  include ActiveModel::Model
 
+  attr_accessor :nr, :date, :company, :address_line_1, :address_line_2, :city, :postcode, :country, :tax_id,
+                :first_name, :last_name, :email
+
+  validates :nr, presence: true
+  validates :date, presence: true
+  validates :email, presence: true
+
+  def to_s
+    "Order %s, %s, %-25s, %-30s," % [@nr, @date, @company, @email]
+  end
+end
+
+$orders = []
+class OrderImporter < ActiveImporter::Base
+  imports Order
+
+  column 'Order no.', :nr
+  column 'Order Date', :date
+  column 'Buyer Email', :email
+  column 'Company', :company, optional: true
+
+  on :row_processed do
+    $orders << model
+  end
+
+end
+
+OrderImporter.import('/Users/ringods/Downloads/report-2016-08-16T2114.csv')
+
+$orders.each do |order|
+  puts order
 end
 
 class EbAttendee
@@ -144,20 +176,20 @@ event_id      = settings[:event][:id]
 eb_auth_tokens = { app_key: app_key, user_key: user_key}
 
 # Connect to Eventbrite
-Eventbrite.token = access_token
+# Eventbrite.token = access_token
 
 # Load each order
-eb_orders = Eventbrite::Order.all({ event_id: event_id , expand:'attendees,buyer'})[:orders]
-eb_orders.each do |eb_order|
-  puts eb_order.to_s
-  puts '--------------------------------------------------------------------------------------'
-end
+# eb_orders = Eventbrite::Order.all({ event_id: event_id , expand:'attendees,buyer'})[:orders]
+# eb_orders.each do |eb_order|
+#   puts eb_order.to_s
+#   puts '--------------------------------------------------------------------------------------'
+# end
 
 # Load each attendee
-eb_attendees = Eventbrite::Attendee.all({ event_id: event_id })[:attendees]
-attendees = Array.new
+# eb_attendees = Eventbrite::Attendee.all({ event_id: event_id })[:attendees]
+# attendees = Array.new
 
-eb_attendees.each do |eb_attendee|
+# eb_attendees.each do |eb_attendee|
   # p = EbAttendee.new
   #
   # # Inject all information into our attendee p
@@ -180,7 +212,7 @@ eb_attendees.each do |eb_attendee|
   #
   # attendees << p
   # puts '--------------------------------------------------------------------------------------'
-end
+# end
 
 # Sort by ticket created date
 # attendees.sort! { |a,b|
