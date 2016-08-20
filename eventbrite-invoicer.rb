@@ -5,11 +5,11 @@ require 'iso_country_codes'
 require 'active_model'
 require 'active_importer'
 require 'payday'
+require 'set'
 
 
 # Read  files
 options = {
-  :credentials => 'credentials.yml',
   :settings => 'settings.yml',
   :mail => nil
 }
@@ -19,8 +19,8 @@ optparse = OptionParser.new do |opts|
     puts opts
     exit
   end
-  opts.on('-c','--credentials FILENAME', 'Path to credentials yamlfile. Default: credentials.yml') do |f|
-    options[:credentials] = f
+  opts.on('-f','--file FILENAME', 'Path to the Eventbrite CSV report.') do |f|
+    options[:file] = f
   end
   opts.on('-s','--settings FILENAME', 'Path to settings yamlfile. Default: settings.yml') do |f|
     options[:settings] = f
@@ -37,15 +37,6 @@ settings={}
 # Loading setting
 begin
   settings = YAML.load_file(options[:settings])
-rescue Exception => e
-  puts "Error #{e}"
-  puts optparse
-  exit -1
-end
-
-# Loading credentials
-begin
-  credentials = YAML.load_file(options[:credentials])
 rescue Exception => e
   puts "Error #{e}"
   puts optparse
@@ -72,43 +63,26 @@ class Order
 
   attr_accessor :nr, :date, :company, :address_line_1, :address_line_2, :city, :postcode, :country, :tax_id,
                 :first_name, :last_name, :email
+  attr_reader :attendees
 
   validates :nr, presence: true
   validates :date, presence: true
   validates :email, presence: true
 
-  def to_s
-    "Order %s, %s, %-25s, %-30s," % [@nr, @date, @company, @email]
-  end
-end
-
-$orders = []
-class OrderImporter < ActiveImporter::Base
-  imports Order
-
-  column 'Order no.', :nr
-  column 'Order Date', :date
-  column 'Buyer Email', :email
-  column 'Company', :company, optional: true
-
-  on :row_processed do
-    $orders << model
+  def initialize
+    @attendees = []
   end
 
-end
+  def add_attendee(attendee)
+    @attendees << attendee
+  end
 
-OrderImporter.import('/Users/ringods/Downloads/report-2016-08-16T2114.csv')
+  def total
+    @attendees.reduce(0) { | interim_total, attendee | interim_total += attendee.total }
+  end
 
-$orders.each do |order|
-  puts order
-end
-
-class EbAttendee
-
-  def method_missing(name, *args)
-    unless (instance_variables.include?("@#{name}"))
-      return instance_variable_get "@#{name}"
-    end
+  def tax
+    @attendees.reduce(0) { | interim_tax, attendee | interim_tax += attendee.tax }
   end
 
   def bill_to
@@ -116,208 +90,237 @@ class EbAttendee
     bill << "#{@first_name} #{@last_name}"
     bill << "#{@email}"
 
-    # If an invoice is required there is a company_name & company_address
-    if self.invoice_required?
-      [ @company_name, @company_address].each do |b|
-        bill << b
-      end
-    else
-      [ @tax_address, @tax_address2 ,  @tax_city].each do |b|
-        bill << b
-      end
-      bill << "#{IsoCountryCodes.find(@tax_country).name}"
+    [ @company, @address_line_1, @address_line_2].each do |b|
+      bill << b
     end
+    bill << "#{@postcode} #{@city}"
+    bill << "#{@country}"
 
-    # Try to correct VAT address
-    unless @company_tax_number_vat.nil?
-      if @company_tax_number_vat.match(/^[0-9]/)
-        bill << @tax_country + @company_tax_number_vat
-      else
-        bill << @company_tax_number_vat
-      end
-    end
     bill.reject! { |i| i == nil }
     return bill.join("\n")
   end
 
   def safe_name
-    if self.invoice_required?
-      unless @company_name.empty?
-        name = @company_name.downcase.gsub(/[^A-Za-z\ ]/,'').gsub(/[\ -]/,'_')
-      else
-        puts "Warning empty company for invoice"
-        name = "#{first_name}#{last_name}"
-      end
+    name = ''
+    unless @company.nil?
+      name = @company.downcase.gsub(/[^A-Za-z\ ]/,'').gsub(/[\ -]/,'_')
     else
-      name = "#{first_name}#{last_name}"
+      name = "#{first_name} #{last_name}"
     end
     name.downcase.gsub(/[^A-Za-z\ ]/,'').gsub(/[\ -]/,'_')
   end
 
-  def from_country?(country)
-    @home_country.upcase == country
+  def nr_of_attendees
+    @attendees.length
+  end
+
+  def to_s
+    "Order %s, %s, %-25s, %-35s, %-15s, %-20s, %-12s, %s, %s, %s" % [@nr, @date, @company, @email, @first_name, @last_name, @tax_id, nr_of_attendees, total, tax]
+  end
+
+  def eql?(other)
+    other.instance_of?(self.class) && @nr == other.nr
+  end
+
+  def ==(other)
+    self.eql?(other)
+  end
+
+  def hash
+    @nr
   end
 
   def free?
-    @amount_paid.to_f == 0
-  end
-
-  def invoice_required?
-    @invoice_required == 'YES'
+    @total.to_f == 0
   end
 
 end
 
-# Setup eventbrite credentials
-access_token  = credentials[:access_token]
-app_key       = credentials[:app_key]
-user_key      = credentials[:user_key]
-event_id      = settings[:event][:id]
-eb_auth_tokens = { app_key: app_key, user_key: user_key}
+$orders = {}
+class OrderImporter < ActiveImporter::Base
+  imports Order
 
-# Connect to Eventbrite
-# Eventbrite.token = access_token
+  column('Order no.', :nr) do |order_nr|
+    order_nr.to_i
+  end
+  column('Order Date', :date) do |date_string|
+    Date.parse(date_string)
+  end
+  column 'Buyer Email', :email
+  column 'Buyer First Name', :first_name
+  column 'Buyer Surname', :last_name
+  column 'Company', :company, optional: true
+  column('Tax Registration ID', :tax_id) do |company_tax_number_vat|
+    unless company_tax_number_vat.nil?
+      if company_tax_number_vat.match(/^[0-9]/)
+        company_tax_number_vat = row['Tax Country'] + company_tax_number_vat
+      end
+    end
+    company_tax_number_vat.delete(' ').delete('.')
+  end
+  column 'Tax Address 1', :address_line_1
+  column 'Tax Address 2', :address_line_2
+  column 'Tax Postcode', :postcode
+  column 'Tax City', :city
+  column 'Tax Country', :country
 
-# Load each order
-# eb_orders = Eventbrite::Order.all({ event_id: event_id , expand:'attendees,buyer'})[:orders]
-# eb_orders.each do |eb_order|
-#   puts eb_order.to_s
-#   puts '--------------------------------------------------------------------------------------'
-# end
+  on :row_processed do
+    $orders[model.nr] = model
+  end
+end
 
-# Load each attendee
-# eb_attendees = Eventbrite::Attendee.all({ event_id: event_id })[:attendees]
-# attendees = Array.new
+class Attendee
 
-# eb_attendees.each do |eb_attendee|
-  # p = EbAttendee.new
-  #
-  # # Inject all information into our attendee p
-  # eb_attendee['attendee'].keys.each do |name|
-  #   p.instance_variable_set("@#{name}",eb_attendee['attendee'][name])
-  #   puts "%-20s: %s" % [name, eb_attendee['attendee'][name]]
-  # puts eb_attendee.profile.first_name
-  # puts eb_attendee.profile.last_name
-  # puts eb_attendee.to_s
-  # end
-  #
-  # # Sanitize question results and inject them as variables
-  # eb_answers = eb_attendee['attendee']['answers']
-  # eb_answers.each do |eb_answer|
-  #   answer = eb_answer['answer']
-  #   question_name = answer['question'].downcase.gsub(/[^A-Za-z0-9_\ \-]/,'').gsub(/[\ -]/,'_')
-  #   # Inject all answers into our attendee p
-  #   p.instance_variable_set("@#{question_name}",answer['answer_text'])
-  # end
-  #
-  # attendees << p
-  # puts '--------------------------------------------------------------------------------------'
-# end
+  attr_accessor :email, :first_name, :last_name, :ticket_type, :total, :tax
 
-# Sort by ticket created date
-# attendees.sort! { |a,b|
-#   DateTime.parse(a.created) <=> DateTime.parse(b.created)
-# }
+  def to_s
+    "Attendee %-35s, %-15s, %-20s" % [@email, @first_name, @last_name]
+  end
+
+end
+
+class AttendeeImporter < ActiveImporter::Base
+  imports Attendee
+
+  column 'Email', :email
+  column 'First Name', :first_name
+  column 'Surname', :last_name
+  column 'Ticket Type', :ticket_type
+  column('Total Paid', :total) do |total|
+    total.to_f
+  end
+  column('Tax Paid', :tax) do |tax|
+    tax.to_f
+  end
+
+  on :row_processed do
+    order_nr = row['Order no.'].to_i
+    order = $orders[order_nr]
+    order.add_attendee(model)
+  end
+
+end
+
+if options[:file].nil?
+  puts "No input file given!"
+  puts optparse
+  exit -1
+end
+
+# first scan, import the orders
+OrderImporter.import(options[:file])
+# second scan, import the attendees and link them to the orders.
+AttendeeImporter.import(options[:file])
+
+$orders.values.each do |order|
+  puts order
+end
+
 
 # Stats
-# money = 0
-# free_tickets = 0
-# invoices = 0
-# countries = Hash.new
-# discounts = Hash.new
+money = 0
+free_tickets = 0
+invoices = 0
+attendees = 0
+countries = Hash.new
 
-# Now iterate over all attendees (from memory)
-# attendees.each do |attendee|
+# Now iterate over all orders (from memory)
+$orders.values.each do |order|
 
   # Update the stats for money, free tickets and invoices
-  # money = money + attendee.amount_paid.to_f
-  # free_tickets +=1 if attendee.amount_paid.to_f == 0
-  # invoices +=1 if attendee.invoice_required == 'YES'
+  money += order.total
+  attendees += order.nr_of_attendees
+  free_tickets += order.nr_of_attendees if order.total == 0
+  invoices +=1 if order.total > 0
 
-  # See how many got discounts
-#   discounts[attendee.discount] += 1 unless discounts[attendee.discount].nil?
-#   discounts[attendee.discount] = 1 if discounts[attendee.discount].nil?
-# end
-#
-# 80.times { print '-'}
-# puts
-#
-# puts "Attendees: #{attendees.size} - Tickets: Free #{free_tickets} - Invoice Required #{invoices}"
-# puts "Total Sales: #{money}"
-# 80.times { print '-'}
-# puts
+end
+
+80.times { print '-'}
+puts
+
+puts "Orders: #{$orders.values.length} - Invoice Required #{invoices} / Attendees: #{attendees} - Tickets: Free #{free_tickets}"
+puts "Total Sales: #{money}"
+80.times { print '-'}
+puts
 
 # Now for all attendees in memory
-# attendees.each do |attendee|
+$orders.values.each do |order|
 
   # Only if they have paid
-  # unless attendee.amount_paid.to_f == 0
-  #
-  #   # Always VAT
-  #   vat_options = {
-  #     :tax_rate => settings[:invoice][:fields][:tax_rate],
-  #     :tax_description => settings[:invoice][:fields][:tax_description],
-  #     :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{attendee.order_id} on #{attendee.created}"
-  #   }
-  #
-  #   invoice_options = {
-  #     :invoice_number => invoice_nr,
-  #     :bill_to => attendee.bill_to,
-  #     :paid_at => attendee.created
-  #   }
-  #
-  #   invoice = Payday::Invoice.new(
-  #     invoice_options.merge(vat_options)
-  #   )
-  #
-  #   # We create separate invoices per attendee
-  #   item_options = {
-  #     :quantity => 1,
-  #     :description => "#{settings[:invoice][:fields][:description]} - #{tickets[attendee.ticket_id]['name']}",
-  #   }
-  #
-  #   price_options = {
-  #     :price => attendee.amount_paid.to_f/(1.21),
-  #   }
-  #
-  #   invoice.line_items << Payday::LineItem.new(
-  #     item_options.merge(price_options)
-  #   )
-  #
-  #   # Create the PDF file if it doesn't exist
-  #   pdf_file="#{settings[:invoice][:prefix]}#{invoice_nr}-#{attendee.safe_name}.pdf"
-  #
-  #   unless File.exists?(pdf_file)
-  #     begin
-  #       invoice.render_pdf_to_file(File.join(settings[:output_dir],pdf_file))
-  #     rescue Exception => ex
-  #       puts "Error: #{ex}"
-  #       exit -1
-  #     end
-  #   end
-  #
-  #   unless options[:mail].nil?
-  #     # Set mail configuration
-  #     Mail.defaults do
-  #       smtp = Net::SMTP.start(settings[:email][:smtp_server],settings[:email][:smtp_port])
-  #       delivery_method :smtp_connection , :connection => smtp
-  #     end
-  #
-  #     mail = Mail.new do
-  #       from settings[:email][:from]
-  #       to "#{attendee.email}" if options[:mail] == 'attendee'
-  #       to settings[:email][:test_address] if option[:mail] = 'test'
-  #       subject settings[:email][:subject]
-  #       body settings[:email][:body]
-  #
-  #       # Attach file
-  #       add_file(pdf_file)
-  #
-  #       # Send mail
-  #       #mail.deliver
-  #     end
-  #   end
-  #
-  #   invoice_nr += 1
-  # end
-# end
+  unless order.total == 0
+
+    puts "Generating invoice for order %s - %s" % [order.nr, order.safe_name]
+
+    # Always VAT
+    vat_options = {
+      :tax_rate => settings[:invoice][:fields][:tax_rate],
+      :tax_description => settings[:invoice][:fields][:tax_description],
+      :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{order.nr} on %s" % [order.date.strftime(settings[:invoice][:config][:date_format])]
+    }
+
+    invoice_display_nr = '%03d' % [invoice_nr]
+    invoice_options = {
+      :invoice_number => "#{settings[:invoice][:prefix]}#{invoice_display_nr}",
+      :bill_to => order.bill_to,
+      :paid_at => order.date,
+      :invoice_date => Date.today
+    }
+
+    invoice = Payday::Invoice.new(
+      invoice_options.merge(vat_options)
+    )
+
+    # We create a single invoice per order
+    order.attendees.each do |attendee|
+      item_options = {
+        :quantity => 1,
+        :description => "#{settings[:invoice][:fields][:description]} - #{attendee.first_name} #{attendee.last_name}",
+      }
+
+      price_options = {
+        :price => attendee.total/(1+settings[:invoice][:fields][:tax_rate].to_f),
+      }
+
+      invoice.line_items << Payday::LineItem.new(
+        item_options.merge(price_options)
+      )
+    end
+
+    # Create the PDF file if it doesn't exist
+    pdf_file="#{settings[:invoice][:prefix]}#{invoice_display_nr}-#{order.safe_name}.pdf"
+    pdf_full_path = File.join(settings[:invoice][:output_dir], pdf_file)
+
+    unless File.exists?(pdf_file)
+      begin
+        invoice.render_pdf_to_file(pdf_full_path)
+      rescue Exception => ex
+        puts "Error: #{ex}"
+        exit -1
+      end
+    end
+
+    unless options[:mail].nil?
+      # Set mail configuration
+      Mail.defaults do
+        smtp = Net::SMTP.start(settings[:email][:smtp_server],settings[:email][:smtp_port])
+        delivery_method :smtp_connection , :connection => smtp
+      end
+
+      mail = Mail.new do
+        from settings[:email][:from]
+        to "#{order.email}" if options[:mail] == 'attendee'
+        to settings[:email][:test_address] if option[:mail] = 'test'
+        subject settings[:email][:subject]
+        body settings[:email][:body]
+
+        # Attach file
+        add_file(pdf_file)
+
+      end
+      # Send mail
+      mail.deliver
+    end
+
+    invoice_nr += 1
+  end
+end
