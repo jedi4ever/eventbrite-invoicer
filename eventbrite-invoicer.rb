@@ -6,6 +6,7 @@ require 'active_model'
 require 'active_importer'
 require 'payday'
 require 'set'
+require 'erb'
 
 
 # Read  files
@@ -251,18 +252,18 @@ $orders.values.each do |order|
 
     puts "Generating invoice for order %s - %s" % [order.nr, order.safe_name]
 
+    notes_template = ERB.new settings[:invoice][:fields][:notes]
     # Always VAT
     vat_options = {
       :tax_rate => settings[:invoice][:fields][:tax_rate],
       :tax_description => settings[:invoice][:fields][:tax_description],
-      :notes => "#{settings[:invoice][:fields][:notes]}\n\nEventbrite Registration - #{order.nr} on %s" % [order.date.strftime(settings[:invoice][:config][:date_format])]
+      :notes => notes_template.result(binding)
     }
 
     invoice_display_nr = '%03d' % [invoice_nr]
     invoice_options = {
       :invoice_number => "#{settings[:invoice][:prefix]}#{invoice_display_nr}",
       :bill_to => order.bill_to,
-      :paid_at => order.date,
       :invoice_date => Date.today
     }
 
@@ -272,9 +273,10 @@ $orders.values.each do |order|
 
     # We create a single invoice per order
     order.attendees.each do |attendee|
+      description_template = ERB.new settings[:invoice][:fields][:description]
       item_options = {
         :quantity => 1,
-        :description => "#{settings[:invoice][:fields][:description]} - #{attendee.first_name} #{attendee.last_name}",
+        :description => description_template.result(binding),
       }
 
       price_options = {
