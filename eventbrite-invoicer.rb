@@ -95,7 +95,10 @@ class Order
       bill << b
     end
     bill << "#{@postcode} #{@city}"
-    bill << "#{@country}"
+    unless @country.nil?
+      bill << "#{IsoCountryCodes.find(@country).name}"
+    end
+    bill << "#{@tax_id}"
 
     bill.reject! { |i| i == nil }
     return bill.join("\n")
