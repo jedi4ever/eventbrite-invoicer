@@ -27,8 +27,8 @@ optparse = OptionParser.new do |opts|
     options[:settings] = f
   end
   opts.on('-m','--mail OPTION', 'Option to mail. Default: none. Other options: "test"|"attendee"') do |m|
-    options[:settings] = m if m == 'test'
-    options[:settings] = m if m == 'attendee'
+    options[:mail] = m if m == 'test'
+    options[:mail] = m if m == 'attendee'
   end
 end
 
