@@ -314,7 +314,7 @@ $orders.values.each do |order|
       mail = Mail.new do
         from settings[:email][:from]
         to "#{order.email}" if options[:mail] == 'attendee'
-        to settings[:email][:test_address] if option[:mail] = 'test'
+        to settings[:email][:test_address] if options[:mail] == 'test'
         subject settings[:email][:subject]
         body settings[:email][:body]
 
