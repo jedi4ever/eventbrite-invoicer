@@ -7,6 +7,7 @@ require 'active_importer'
 require 'payday'
 require 'set'
 require 'erb'
+require 'optparse'
 
 
 # Read  files
