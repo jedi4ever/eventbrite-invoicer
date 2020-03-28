@@ -1,7 +1,7 @@
 ## Eventbrite-invoicer
 
-Ruby script to read an eventbrite event and generate invoices for the attendees and optionally email them
-This is was created out of the frustration that evenbrite doesn't generate invoices automagically.
+Ruby script to read an Eventbrite event and generate invoices for the attendees and optionally email them
+This is was created out of the frustration that Eventbrite doesn't generate invoices automagically.
 
 ## Install
 
@@ -9,16 +9,16 @@ This is was created out of the frustration that evenbrite doesn't generate invoi
 
 ## Config
 ### Credentials.yml
-By default it wil look for a file with your eventbrite credentials in your local directory with the name 'credentials.yml'
-You can generate them by visiting <https://www.eventbrite.com/userkeyapi> and generating one. This will give you 'app_key' and 'user_key'
+By default it will look for a file with your Eventbrite application credential in your local directory with the 
+name 'credentials.yml'. You can generate them by visiting <https://www.eventbrite.com/myaccount/apps/> and generating 
+one. This will give you *Your Personal OAuth token*.
 
     ---
-    :app_key: your-app-key-here
-    :user_key: your-user-key-here
+    :access_token: <Your Personal OAuth Token>
 
 ### Settings file
-By default it wil look for a file with your eventbrite event/invoice settings in your local directory with the name 'settings.yml'
-Adapt to your likings. 
+By default it wil look for a file with your eventbrite event/invoice settings in your local directory with the 
+name 'settings.yml'. Adapt to your likings. 
 
 Most likely you'll need to :
 

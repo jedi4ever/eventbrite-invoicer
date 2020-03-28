@@ -1,8 +1,7 @@
-source "http://rubygems.org"
+source 'https://rubygems.org'
 
-# Until the NL locale gets merged
-#gem "payday", :git => 'git://github.com/commondream/payday.git'
-gem "payday", :git => 'git://github.com/jedi4ever/payday.git'
-gem "eventbrite-client"
-gem "iso_country_codes"
-gem "mail"
+gem 'payday', '~> 1.1', '>= 1.1.5'
+gem 'iso_country_codes', '~> 0.7.5'
+gem 'mail', '~> 2.6', '>= 2.6.4'
+gem 'activemodel', '~> 4.2', '>= 4.2.7.1'
+gem 'active_importer', '~> 0.2.6'

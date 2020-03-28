@@ -1,5 +1,0 @@
-#this uses rvm
-# Eventbrite gem does not work with ruby 1.8.7 (blank? function is not implemented for string"
-rvm use 1.9.2
-rvm_gemset_create_on_use_flag=1
-rvm gemset use eventbrite-invoicer
